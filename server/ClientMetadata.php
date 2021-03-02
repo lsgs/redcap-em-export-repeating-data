@@ -29,7 +29,7 @@ class ClientMetadata
         // pick out the value from this action tag
         $components = explode('=', $annotation );
         // $components[0] is the action tag, and $components[1] is the value we want
-        return trim($components[1]);
+        return trim($components[1]," \n\r\t\v\0'\"");
     }
     function getClientMetadata() {
         global $module;
@@ -169,7 +169,6 @@ class ClientMetadata
                 // set the appropriate classes for panel heading coloring and show/hide the correct badge
                 $(".panel:visible").each(function() {
                     instrumentName= $(this).attr('id').substr(6);
-
                     if ($( this ).find(".repeating-primary").length !== 0) {
                         repeatingForms.push(instrumentName);
                         if (isFirstRepeatingPanel) {
@@ -192,18 +191,16 @@ class ClientMetadata
                             if (panelHeading.hasClass('ref-tier-2')) {
                                 // look for the instance linked panel; only tag as tier-3 if present
                                 var badge = $(this).find(".badge-primary");
-                                var linkedToInstrument = badge.text().substr(22).trim();
+                                var linkedToInstrument =  badge.text().substr(22).trim();
                                 // console.log(instrumentName + ' linked to '+ linkedToInstrument);
                                 targetDate = getInstrumentForField(firstRepeatingPanel + '_@date_field');
                                 if (! targetDate) {
                                     targetDate = getInstrumentForField(getInstrumentForField(firstRepeatingPanel + '@parent') + '_@date_field');
                                 }
                                 $(this).find(".target-date").replaceWith("<span class='target-date'> after " + targetDate + " (days)</span>");
-                                // sigh. "linkedToInstrument in repeatingForms" should work but does not
-                                // perhaps due to trailing blanks? so do it the hard way
                                 linkedInstrumentFound  = false;
                                 for (let i = 0; i < repeatingForms.length; i++) {
-                                    linkedInstrumentFound = linkedInstrumentFound || repeatingForms[i].trim() === linkedToInstrument;
+                                    linkedInstrumentFound = linkedInstrumentFound || linkedToInstrument.includes( repeatingForms[i] );
                                 }
 
                                 if (linkedInstrumentFound) {
@@ -316,7 +313,14 @@ class ClientMetadata
                     {
                         activeClass: "ui-state-default",
                         hoverClass: "ui-state-hover",
-                        accept: ":not(.instrument)",
+                        //accept: ":not(.instrument), :not(.ui-sortable-handle)",
+                        accept: function(draggable) {    // SRINI Should not accept, if it is from the sortable div also
+                            if (draggable.hasClass("instrument") || draggable.hasClass("ui-sortable-handle"))
+                                return false ;
+                            else
+                                return true ;
+                            //if ($(this).)
+                        },
                         drop: function( event, ui )
                         {
                             $( "#tip_exporting_all_rows" ).remove();
@@ -361,9 +365,15 @@ class ClientMetadata
 
                             $( panelSelector  ).show();
                             tagRepeatables();
+
+                            // SRINI - SDM-135 - following is addded to avoid sortable issues
+                            // when closing and opening the div
+                            $( "#column_spec" ).sortable( "refreshPositions" );
+
                         }
                     }).sortable(
                     {
+                        tolerance : "pointer",
                         update: function(event, ui)
                         {
                             tagRepeatables();
@@ -381,6 +391,11 @@ class ClientMetadata
                     $("#upper-bound-" + instrumentName).val("");
                     $("#lower-bound-" + instrumentName).val("");
                     tagRepeatables();
+
+                    // SRINI - SDM-135 - following is addded to avoid sortable issues
+                    // when closing and opening the div
+                    $( "#column_spec" ).sortable( "refreshPositions" );
+
                 });
 
                 $(document).on('click', '.delete-criteria', function () {

@@ -89,6 +89,30 @@ $(function () {
         }
     });
 
+
+    $(document).on('click', '.delete-saved-report', function () {
+        if (confirm('Are you sure you want to delete the saved settings for report ' + $(this).data('report-name') + ' ?')) {
+            $.ajax({
+                url: $("#save-report").val(),
+                timeout: 60000000,
+                type: 'GET',
+                data: {'action': 'delete', 'report_name': $(this).data('report-name')},
+                dataType: 'json',
+                success: function (response) {
+                    if (response.status == 'success') {
+                        loadSavedReportSettings()
+                    }
+
+                },
+                error: function (request, error) {
+                    $("#ui-loading").hide();
+                    showError("STARTUP Server Error: " + JSON.stringify(error));
+                    // console.log(request);
+                    console.log(error);
+                }
+            });
+        }
+    })
     // last but not least, trigger a round trip to the server asking for the record count
     runQuery(false, true);
 });
@@ -184,7 +208,7 @@ function runQuery(preview, record_count) {
                     var count = response.count;
                     $("#count-display").html( ' matching records: ' + count);
                 } else {
-                    var csv_data = convertToCSV(response.data);
+                    var csv_data = convertToCSV(response.t1.data);
                     triggerDownload(csv_data, json.reportname + ".csv", 'text/csv;charset=utf-8;' )
                 }
             }
@@ -197,14 +221,20 @@ function runQuery(preview, record_count) {
     });
 }
 
+function loadSavedReport() {
+    if ($('#saved-reports').find(":selected").val() != '') {
+        applyModel(JSON.parse($('#saved-reports').find(":selected").val()));
+    }
+}
+
 function promptForUpload() {
-    $( "#dialog" ).dialog({
+    $("#dialog").dialog({
         resizable: false,
         height: "auto",
         width: 430,
         modal: true
     });
-    $( "#dialog" ).show();
+    $("#dialog").show();
 }
 
 function configurationError(formdata) {
@@ -294,33 +324,56 @@ function toggleIcon(id) {
         jqueryElement.removeClass('fa-angle-right');
         jqueryElement.addClass('fa-angle-down');
     }
+    // SRINI - SDM-135 - following is addded to avoid sortable issues 
+    // when closing and opening the div
+    $( "#column_spec" ).sortable( "refreshPositions" );
 }
 
 function saveExportJson() {
     var formdata = $("#export-repeating").serializeArray();
     var json = getExportJson(false, formdata, false);
-    triggerDownload(JSON.stringify(json), json.reportname + ".json", 'text/json;charset=utf-8;' )
+
+    $.ajax({
+        url: $("#save-report").val(),
+        timeout: 60000000,
+        type: 'GET',
+        data: {'action': 'save', 'report_name': json.reportname, 'report_content': json},
+        dataType: 'json',
+        success: function (response) {
+            if (response.status == 'success') {
+                var $el = $("#saved-reports");
+                $el.empty(); // remove old options
+                $el.append($("<option></option>")
+                    .attr("value", '').text('Select a Report'));
+                $.each(JSON.parse(addslashes(response.reports)), function (key, value) {
+                    $el.append($("<option></option>")
+                        .attr("value", JSON.stringify(addslashes(value))).text(key));
+                });
+            }
+
+        },
+        error: function (request, error) {
+            $("#ui-loading").hide();
+            showError("STARTUP Server Error: " + JSON.stringify(error));
+            // console.log(request);
+            console.log(error);
+        }
+    });
+
+    //triggerDownload(JSON.stringify(json), json.reportname + ".json", 'text/json;charset=utf-8;' )
 }
 
-function getLabelOrCode(field, item_value, raw_or_label) {
+function getCode(field, item_value) {
     // used when assembling the model of the user-specified filters. If raw data, return the item as is
     // otherwise look up and return the associated label, so the filter value will match the selected data
     lov = getInstrumentForField(field + '@lov');
-    if (raw_or_label === 'label' && lov !== "") {
-
-        parts1 = lov.split("\n " + item_value + ", ");
-        if (parts1.length === 1) {
-            // they selected the first item on the list
-            parts1 = lov.split(item_value + ", ");
-        }
-        parts2 = parts1[1].split("\n");
-        return parts2[0].trim();
-    }
-    return item_value;
+    rval = item_value;
+    return rval;
 }
 
 function getExportJson(is_preview, formdata, record_count) {
     var struct = {};
+    struct.applyFiltersToData = $("input:radio[name ='applyFiltersToData']:checked").val();
     struct.record_count = record_count;
     struct.reportname = 'unnamed_report';
     var columns =[];
@@ -366,10 +419,10 @@ function getExportJson(is_preview, formdata, record_count) {
                 addFilter = true;
             }
         } else if (item.name === 'limiter_value[]' && item.value) {
-             // console.log('adding limiter_value '+item.name);
+            // console.log('adding limiter_value '+item.name);
             filter.validation = getInstrumentForField(filter.field + '@validation');
             addFilter = true;
-            filter.param = getLabelOrCode(filter.field, item.value, struct.raw_or_label);
+            filter.param = getCode(filter.field, item.value, struct.raw_or_label);
         } else if (item.name === 'limiter_connector[]' && addFilter) {
             filter.boolean = item.value;
             filter.instrument = getInstrumentForField(filter.field);
@@ -425,12 +478,13 @@ function getExportJson(is_preview, formdata, record_count) {
     struct.columns = columns;
     struct.filters = filters;
     struct.cardinality = Object.assign({}, cardinality);
-     // console.log(struct);
+      console.log(struct);
     return struct;
 
 }
 
 function convertToCSV(objArray) {
+    console.log(objArray);
     var array = typeof objArray != 'object' ? JSON.parse(objArray) : objArray;
     var str = '';
 
@@ -477,4 +531,28 @@ function triggerDownload(data, filename, filetype) {
     }
 }
 
+function loadSavedReportSettings() {
+    $.ajax({
+        url: $("#save-report").val(),
+        timeout: 60000000,
+        type: 'GET',
+        data: {'action': 'load'},
+        dataType: 'json',
+        success: function (response) {
+            if (response.status == 'success') {
+                var $el = $("#saved-reports-tbody");
+                $el.empty(); // remove old options
+                $.each(JSON.parse(response.reports), function (key, value) {
+                    $el.append($("<tr></tr>").html("<td>" + key + "</td><td><a href='#' class='delete-saved-report' data-report-name='" + key + "'>Delete</a></td>"));
+                });
+            }
 
+        },
+        error: function (request, error) {
+            $("#ui-loading").hide();
+            showError("STARTUP Server Error: " + JSON.stringify(error));
+            // console.log(request);
+            console.log(error);
+        }
+    });
+}

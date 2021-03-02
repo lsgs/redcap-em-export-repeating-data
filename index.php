@@ -39,43 +39,66 @@ $port = (PORT === '') ? '' : ':'.PORT;
             <!-- set up for calling REDcap API via Ajax to display controls for user-specified field filters (upper right) -->
             <input type="hidden" name="base-url" id="base-url"
                    value="<?php echo $_SERVER['REQUEST_SCHEME'] . '://' . SERVER_NAME . $port . APP_PATH_WEBROOT . 'DataExport/report_filter_ajax.php?pid=' . PROJECT_ID ?>">
-            <input type="hidden" name="redcap_csrf_token" id="redcap_csrf_token" value="<?php echo System::getCsrfToken() ?>">
+            <input type="hidden" name="redcap_csrf_token" id="redcap_csrf_token"
+                   value="<?php echo System::getCsrfToken() ?>">
             <input type="hidden" name="report-submit" id="report-submit"
                    value="<?php echo $module->getUrl("server/getDataFromServer.php") ?>">
             <input type="hidden" name="clientmeta-submit" id="clientmeta-submit"
                    value="<?php echo $module->getUrl("server/getClientMetadata.php") ?>">
             <input type="hidden" name="filter-submit" id="filter-submit"
                    value="<?php echo $module->getUrl("server/getFilterDefns.php") ?>">
-
+            <input type="hidden" name="save-report" id="save-report"
+                   value="<?php echo $module->getUrl("server/manageReports.php") ?>">
             <!-- imitate other REDCap page headers -->
-            <div class="row" >
+            <div class="row">
                 <div class="projhdr">
                     <i class="fas fa-download"></i>
                     Review / Export Data
                 </div>
             </div>
 
-            <div  id="dialog" title="Restore Settings" style="display:none">
+            <div id="dialog" title="Restore Settings" style="display:none">
                 <table id="holder">
                     <tr>
                         <td>Drop files here</td>
                     </tr>
                     <tr>
-                        <td><ul id="fileList"></ul></td>
+                        <td>
+                            <ul id="fileList"></ul>
+                        </td>
                     </tr>
                 </table>
             </div>
             <!-- prompt for a report name used to save and restore report settings -->
             <div class="row" style="padding-right: 15px;">
 
-                <div class="col-md-8 col-sm-6  cardinal emphatic header nowrap text-left " style="min-width:200px">
-                    <span>Report Name:   <input type="text" id="report_name"  name="report_name" size="40"/><select class="ml-3 mb-1 jqbuttonmed  ui-corner-all " name="raw_or_label" id="raw_or_label"><option value="label">Labels</option><option value="raw">Raw Data</option></select></span>
+                <div class="col-md-7 col-sm-5  cardinal emphatic header nowrap text-left " style="min-width:200px">
+                    <span>Report Name:   <input type="text" id="report_name" name="report_name" size="40"/><select
+                                class="ml-3 mb-1 jqbuttonmed  ui-corner-all " name="raw_or_label" id="raw_or_label"><option
+                                    value="label">Labels</option><option value="raw">Raw Data</option></select></span>
                 </div>
                 <div class="col-md-2 col-sm-3 cardinal emphatic header nowrap text-left">
-                    <button type="button"  onclick="saveExportJson()" id="save_export_json" class="data_export_btn jqbuttonmed ui-button ui-corner-all ui-widget"> <i class="fas fa-file-download"></i> Save Settings</button>
+                    <button type="button" onclick="saveExportJson()" id="save_export_json"
+                            class="data_export_btn jqbuttonmed ui-button ui-corner-all ui-widget"><i
+                                class="fas fa-file-download"></i> Save Settings
+                    </button>
                 </div>
-                <div class="col-md-2  col-sm-3 cardinal emphatic header nowrap text-left">
-                    <button type="button" onclick="promptForUpload()" id="load_export_json" class="data_export_btn jqbuttonmed ui-button ui-corner-all ui-widget"> <i class="fas fa-file-upload"></i> Load Settings</button>
+                <div class="col-md-3  col-sm-3 cardinal emphatic header nowrap text-left">
+                    <!--                    <button type="button" onclick="promptForUpload()" id="load_export_json" class="data_export_btn jqbuttonmed ui-button ui-corner-all ui-widget"> <i class="fas fa-file-upload"></i> Load Settings</button>-->
+                    <span>
+                            Saved Reports:
+                            <select id="saved-reports" onchange="loadSavedReport()">
+                            <option value="">Select a Report</option>
+                            <?php
+                            $reports = json_decode(str_replace("\\n", "", $module->getProjectSetting('saved-reports')), true);
+                            foreach ($reports as $name => $report) {
+                                ?>
+                                <option value='<?php echo json_encode($report) ?>'><?php echo $name ?></option>
+                                <?php
+                            }
+                            ?>
+                        </select>
+                        </span>
                 </div>
             </div>
 
@@ -88,7 +111,10 @@ $port = (PORT === '') ? '' : ':'.PORT;
                 <div class="col-md-3 pt-3 overflow-auto" style="max-height: 750px;">
                     <!-- this div is selected by bstreeview.js to render content specified by the Json at the bottom of the page -->
                     <!-- also note we use a customized version of bstreeview that makes each element draggable  -->
-                    <div id="tree" class="bstreeview " >
+                  <div id="treeSearchDiv">
+                    <input type="text" id="treeSearch" class="mb-3" placeholder="Search fields">
+                  </div>
+                  <div id="tree" class="bstreeview " >
 
                     </div>
 
@@ -104,10 +130,13 @@ $port = (PORT === '') ? '' : ':'.PORT;
                 <div class="col-md-9 pt-3">
                     <span><div class="cardinal">Filter Rows - Drag and Drop from left menu</div>
                     <div class="container droptarget" >
-                            <div id="count-display" class="mr-1" style="float:right"> matching records: 0</div><button type="button" class="mr-1 mt-1 badge badge-light" style="float:right" onclick="runQuery(false, true)">count</button>
+                           <div class="col-12 mt-2"><label>Apply Filters to Data?</label> <input type="radio" id="aftd-yes" name="applyFiltersToData" value="true" checked>
+                          <label for="yes">Yes</label>
+                          <input type="radio" id="aftd-no" name="applyFiltersToData" value="false" >
+                          <label for="female">No</label><div id="count-display" class="mr-1" style="float:right"> matching records: 0</div><button type="button" class="mr-1 mt-1 badge badge-light" style="float:right" onclick="runQuery(false, true)">count</button>
                         <div class="spinner-border text-secondary mt-1 mr-1 mini-spin" role="status" id="count-running" style="display: none; float:right">
                             <span class="sr-only">Loading...</span>
-                        </div>
+                        </div></div>
                     </span>
                     <div id="row_filter" class="list-group filters-fields " style="min-height: 50px; width: 100%;">
                         <div class="grey cbox-panel" id="tip_exporting_all_rows"><span >Currently exporting all rows. </span><span id="tip_missing_col_1">You must specify at least one column below.</span></div>
