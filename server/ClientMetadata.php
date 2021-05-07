@@ -73,10 +73,14 @@ class ClientMetadata
                         <?php
                         $fields = $module->getFieldNames($key);
                         foreach ($fields as $field) {
+                            // SQL fields use the element_enum field for the SQL, but it's not actually an enum
+                            if ($this->dataDict[$field]['element_type'] === 'sql') {
+                                continue;
+                            }
                         ?>
                             instrumentLookup["<?php echo $field ?>"] = "<?php echo $key ?>";
                             instrumentLookup["<?php echo $field ?>@validation"] = "<?php echo $module->getValue($field . '@validation') ?>";
-                            instrumentLookup["<?php echo $field ?>@lov"] = "<?php echo $module->getValue($field . '@lov') ?>";
+                            instrumentLookup["<?php echo $field ?>@lov"] = "<?php echo str_replace($module->getValue($field . '@lov'),'"','\"') ?>";
                         <?php
                         }
                         // last but not least, add lookups for parent instruments to handle the case where the relationships
@@ -110,7 +114,7 @@ class ClientMetadata
                         // add last or earliest filter for date fields
                         if (data.indexOf('class="date_') > -1) {
                             limiterOperator.append('<option class="minmax" value="MAX">latest</option>');
-                            limiterOperator.append('<option class="minmax" value="MIN">earliest</option>');;
+                            limiterOperator.append('<option class="minmax" value="MIN">earliest</option>');
                         }
                         // hide the text box if date filter is exists, not-exists, max or min
                         limiterOperator.attr('id', fieldname + '_op');
@@ -146,7 +150,7 @@ class ClientMetadata
 
                 var newdata;
                 if (ind > 0) {
-                    var js = '\<script\>\$( function() {$( \"#'+fieldname1+'_ac\" ).autocomplete({source: '+fieldname1+'_aclov }); } );</script\>';
+                    var js = '\<script\>\$( function() {$( \"#'+fieldname1+'_ac\" ).autocomplete({source: '+fieldname1+'_aclov }); } );\</script\>';
 
                     newdata = data.substr(0,ind) + ' id=\"' + fieldname1 + '_ac\" ' + data.substr(ind) +js  ;
                 } else {
@@ -413,14 +417,13 @@ class ClientMetadata
 
     function getFilterDefns() {
         global $module;
-        $sql = "select rd.field_name,value
+        $sql = "select rd.field_name,substring(value,1,33) value, element_validation_type
                         from redcap_data rd
                         join redcap_metadata rm on rd.project_id = rm.project_id
                          and rm.field_name = rd.field_name
                         where rd.project_id = ".$module->getProjectId()."
                         and element_type in ('calc', 'text')
-                        group by rd.field_name, value
-                        order by rd.field_name, upper(value)";
+                        group by rd.field_name,substring(value,1,33), element_validation_type";
         $autodata = db_query($sql);
         $textFieldNames = [];
 
@@ -429,10 +432,20 @@ class ClientMetadata
             $dberr = db_error();
             $module->emError('Query error in autocomplete generation: ' . print_r($dberr, TRUE));
          } else {
-            echo "<script>";
+            
+            $nFilters = 0;
             while ($row = db_fetch_assoc($autodata)) {
+                if ($nFilters == 0) {
+                    echo "<script>";
+                }
+                $nFilters++;
                 $fieldName = $row['field_name'];
-                $value= str_replace("\n","", $row['value']);
+                // strip out both \n and \r as these embedded in a search string will create invalid javascript
+                // and disable the entire list of values for all fields
+                // note that REDCap data entry already strips these out of text fields, only preserving them in notes
+                // also note that these characters can and will show up in REDCap projects populated via data import
+                $value= str_replace("\r", "", str_replace("\n","", $row['value']));
+                $validation = $row['element_validation_type'];
                 if ($currentFieldName != $fieldName) {
                     if (strlen($currentFieldName) > 0) { // close off the end of the earlier variable definition
                         echo "\n];\n$( \"#$currentFieldName"."_ac\" ).autocomplete({\n  source: $currentFieldName"."_aclov\n});";
@@ -441,12 +454,40 @@ class ClientMetadata
                     $currentFieldName = $fieldName;
                     $textFieldNames[] = $currentFieldName;
                 }
+                $value = str_replace("\\","\\\\", $value);
+                $value = str_replace("'","\'", $value);
+                // last but not least, if this is a date, reformat using the active format string
+                if ("date_mdy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['month'] .'-'. $ar['day'] .'-'. $ar['year'];
+                    $module->emDebug('rewrote value as ' . $value);
+                } else if ("date_dmy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['day'] .'-'. $ar['month'] .'-'. $ar['year'];
+                    $module->emDebug('rewrote value as ' . $value);
+                } else if ("datetime_mdy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['month'] .'-'. $ar['day'] .'-'. $ar['year'] .' '. $ar['hour'] .':'. $ar['minute'];
+                    $module->emDebug('rewrote value as ' . $value);
+                } else if ("datetime_dmy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['day'] .'-'. $ar['month'] .'-'. $ar['year'] .' '. $ar['hour'] .':'. $ar['minute'];
+                    $module->emDebug('rewrote value as ' . $value);
+                } else if ("datetime_seconds_mdy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['month'] .'-'. $ar['day'] .'-'. $ar['year'] .' '. $ar['hour'] .':'. $ar['minute'] . ':' .$ar['second'];
+                } else if ("datetime_seconds_dmy" === $validation) {
+                    $ar = date_parse($value);
+                    $value = $ar['day'] .'-'. $ar['month'] .'-'. $ar['year'] .' '. $ar['hour'] .':'. $ar['minute'] . ':' .$ar['second'];
+                }
                 echo "  '$value',";
-                //$module->emDebug('merged: ' . print_r($data, TRUE));
+                
             }
         }
         // $module->emDebug('YO1: ' . print_r($textFieldNames, TRUE));
-        echo "\n];\n$( '#$currentFieldName"."_ac' ).autocomplete({\n  source: $currentFieldName"."_aclov\n});</script>";
+        if ($nFilters > 0) {
+            echo "\n];\n$( '#$currentFieldName" . "_ac' ).autocomplete({\n  source: $currentFieldName" . "_aclov\n});</script>";
+        }
 
         // ok, now the script has been written, add the field definitions
         foreach ($textFieldNames as $textFieldName) {

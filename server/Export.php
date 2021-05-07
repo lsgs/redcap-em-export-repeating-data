@@ -88,13 +88,13 @@ class Export
     function applyUserExportRights($result) {
         global $module;
         //this doesn't work $user=$module->getUser();
-        //$module->emDebug("User : " .print_r($module->framework->getUser(USERID), true));
+        //this doesn't work either  $module->framework->getUser(USERID)
 
         $rights=$module->getUserRights();
-        //$module->emDebug("Rights :" . print_r($rights, TRUE));
+        $module->emDebug("Rights :" . print_r($rights, TRUE));
         //$module->emDebug("data_export_tool=".$rights['data_export_tool']);
-        if ($rights['data_export_tool'] === '1') {
-            // phi access
+        if (empty($rights) || $rights['data_export_tool'] === '1') {
+            // user is superuser or has phi access
             return $result;
         } else if ($rights['data_export_tool'] === '0') {
             //no access
@@ -652,21 +652,22 @@ class Export
 
         $project_id = $this->Proj->project_id;
 
-        // record count feature - the end-user has clicked the "count" button in the filter panel
+        // record count feature - return this every time the end-user interacts with a button
+        // not just when they click the "count" button in the filter panel
+    
+        $sql = "select count(distinct rdm.record) as row_count " ;
+        $sql = $this->generateWhereClauseFromFilters($json, $project_id, $valSel, $sql);
+
+        $result1 = db_query($sql);
+
+        $row = db_fetch_assoc($result1);
+
+        $result["count"] = $row["row_count"];
+        
+        // if the user is asking for just counts, return. Otherwise they are asking for data , so carry on
         if ($json->record_count === 'true') {
-            $sql = "select count(distinct rdm.record) as row_count " ;
-            $sql = $this->generateWhereClauseFromFilters($json, $project_id, $valSel, $sql);
-
-            $result1 = db_query($sql);
-
-            $row = db_fetch_assoc($result1);
-
-            $result["count"] = $row["row_count"];
             return $result;
         }
-
-        // if we reach this point, the user is asking for data rather than counts
-
         // Keep the order of the fields as specified by the user
         $select_fields = array();  // Fields which will be returned to the caller
 
@@ -708,7 +709,7 @@ class Export
         if (strlen(trim($sql)) > 0) {
             // actually execute the sql - this is where the magic happens!
             $rptdata = db_query($sql);
-
+            
             $result["status"] = 1; // when status = 0 the client will display the error message
             if (strlen(db_error()) > 0) {
                 $dberr = db_error();
@@ -734,6 +735,7 @@ class Export
     // and by replacing codes with labels if so requested by the end-user
     function package($preview, $select_fields, $rptdata, $showLabel)
     {
+        global $module;
         $data = [];
         $hdrs = $this->pivotCbHdr($select_fields);
         if ("false" == $preview) {
@@ -741,6 +743,7 @@ class Export
             $data[] = $hdrs;  // $headers;
         }
         while ($row = db_fetch_assoc($rptdata)) {
+            $module->emDebug(print_r($row,TRUE));
             $cells = [];
             for ($k = 0; $k < count($select_fields); $k++) {
 
@@ -867,17 +870,18 @@ class Export
         if ($showLabel) {
             $lovMeta = $this->instrumentMetadata->getValue($field . '@lov');
         }
-
+        
         if ($this->isCheckbox($field)) {
             $lovstr = $this->cbLov($field);
             $lov = explode("\\n", $lovstr);
-
+            
             for ($i = 0; $i < count($lov); ++$i) {
                 $found = false;
-                for ($j = 0; $j < count($lov); ++$j) {
+                // now look in loSetValues for the index
+                for ($j = 0; $j < count($loSetValues); ++$j) {
                     // consider each possible value from the data dictionary in turn
-                    if (strpos($lov[$i], $loSetValues[$j]) !== FALSE) {
-                        $newCells[] = $this->getValueOrLabel($loSetValues[$j], $lovMeta, $showLabel);
+                    if (strpos(trim($lov[$i]), trim($loSetValues[$j])) === 0) {
+                        $newCells[] = $this->getValueOrLabel(trim($loSetValues[$j]), $lovMeta, $showLabel);
                         $found = true;
                     }
                 }
@@ -899,6 +903,9 @@ class Export
     }
 
     public function getValueOrLabel($cellValue, $lov, $showLabel) {
+        if (! $cellValue) {
+            return $cellValue;
+        }
         if ($showLabel) {
             $arLov = explode("\\n", $lov);
             foreach($arLov as $value) {
@@ -1069,7 +1076,7 @@ class Export
                 if ($cnt > 0) {
                     $fieldstr .= ", ";
                 }
-                $fieldstr .= "COALESCE ($instrument.$field,'') `$field`";
+                $fieldstr .= "COALESCE (".$instrument."_a.".$field.",'') `$field`"; // append _a to table alias in case the table name is a SQL reserved word
                 $cnt++;
                 if ($mode == TEMP_TABLE_DEFN) {
                     break; // only need record_ids in the temp table
@@ -1111,7 +1118,7 @@ class Export
         foreach ($children as $formName => $instances) {
             // start with the parent
             $spec = $json->forms->$formName;
-            $selectClause = "$formName.$recordId, ".$formName."_instance, ";
+            $selectClause = "$formName"."_a.$recordId, ".$formName."_instance, ";
             $selectClause .= $this->getFields($formName, $spec->fieldsToDisplay, $mode);
             $fieldNames = $this->augment($spec->form_name, $spec->fieldsToJoin, $filters);
             $inlineTable = $this->getInlineTableSql($fieldNames, $spec->form_name, $pid, $spec, $filters, $mode);
@@ -1125,9 +1132,9 @@ class Export
                 $inlineTable .= $this->getInlineTableSql($fieldNames, $spec->form_name, $pid, $spec, $filters, $mode);
                 $jk = ($spec->join_key_field == 'instance' ? $spec->form_name . "." . $spec->form_name . "_instance" :  $spec->join_key_field);
                 $fk = $spec->foreign_key_ref;
-                $inlineTable .= " ON $formName.$recordId=$spec->form_name.$recordId AND /*1*/ $jk = " . $fk . "_instance";
+                $inlineTable .= " ON ".$formName."_a.$recordId=$spec->form_name"."_a.$recordId AND /*1*/ $jk = " . $fk . "_instance";
             }
-            $inlineTable = "(select  $selectClause  FROM ( $inlineTable ) ) $formName" ;
+            $inlineTable = "(select  $selectClause  FROM ( $inlineTable ) ) $formName" . "_a" ;
             $tablePivots[$formName] = $inlineTable;
 
         }
@@ -1166,7 +1173,7 @@ class Export
         }
         $finalSql =  $selectClause . $finalSql ;
         if ($mode == TEMP_TABLE_USE) {
-            $finalSql = $finalSql . " INNER JOIN fred on fred.$recordId = " . $priorTable . ".$recordId";
+            $finalSql = $finalSql . " INNER JOIN fred on fred.$recordId = " . $priorTable . "_a.$recordId";
 
         }
         return $finalSql;
@@ -1197,7 +1204,7 @@ class Export
             } else {
                 // Remove the table alias from the end of this string
                 // when $tablePivots $innerTableSql used in this context
-                $innerTableSql = $this->str_lreplace($formName , '', $innerTableSql);
+                $innerTableSql = $this->str_lreplace($formName . "_a" , '', $innerTableSql);
             }
             $pieces = $this->getDateProximityTableJoin($spec->form_name, $innerTableSql, $spec, $pid, $filters, $mode);
             $finalSql .= $pieces['tableSql'];
@@ -1212,7 +1219,7 @@ class Export
 
         if ($cntTableJoins > 0) {
             if ($spec->join_type != 'date_proximity') {
-                $finalSql .= " ON $formName.$recordId=$priorTable.$recordId ";
+                $finalSql .= " ON $formName"."_a.$recordId=$priorTable"."_a.$recordId ";
             } else {
                 $finalSql .= " " . $joinClause;
             }
@@ -1369,7 +1376,7 @@ class Export
     function getDagFilter($prefix, $pid) {
         global $module;
         $userRights = $module->getUserRights();
-        if (!empty($userRights['group_id']) && $userRights['group_id']!==0) {
+        if ( !empty($userRights['group_id']) && $userRights['group_id']!==0) {
             //$module->emDebug('Group ID:' . $userRights['group_id']);
             return " and ".$prefix.".record in (select record 
                                 FROM redcap_record_list rl
@@ -1409,9 +1416,9 @@ class Export
                                   " and rd.field_name = '$spec->foreign_key_field'
                                   and rm.form_name = '$spec->foreign_key_ref') t
                           where ".$formName."_int.".$formName."_instance = t.".$formName."_instance
-                            and ".$formName."_int.$recordId = t.$recordId $filter) $formName";
+                            and ".$formName."_int.$recordId = t.$recordId $filter) $formName" . "_a";
         // as odd as the join clause looks, it's actually correct
-        $joinClause = "ON ($formName.$recordId = $spec->foreign_key_ref.$recordId and $formName.".$spec->foreign_key_ref."_instance = $spec->foreign_key_ref.".$spec->foreign_key_ref."_instance)";
+        $joinClause = "ON ($formName"."_a.$recordId = $spec->foreign_key_ref"."_a.$recordId and $formName"."_a.".$spec->foreign_key_ref."_instance = $spec->foreign_key_ref"."_a.".$spec->foreign_key_ref."_instance)";
         $pieces['joinClause'] = $joinClause;
         $pieces['tableSql'] = $tableSql;
         return $pieces;
@@ -1430,7 +1437,7 @@ class Export
             $this->getDagFilter('rd', $pid)
             ." and rd.project_id = $pid
         and rm.form_name = '$formName'
-      $grouper) t   " . $this->handleFilters($filters, $formName, 'WHERE', $mode != TEMP_TABLE_USE) . ") $formName";
+      $grouper) t   " . $this->handleFilters($filters, $formName, 'WHERE', $mode != TEMP_TABLE_USE) . ") $formName"."_a";
 
         return $finalSql  ;
     }

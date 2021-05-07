@@ -46,7 +46,7 @@ $(function () {
             if (response.status === 0) {
                 showError("Error: " + response.message);
             } else {
-                //console.log(response);
+                // console.log(response);
                 $("#insert-row-filters-here").replaceWith(response);
             }
 
@@ -99,7 +99,7 @@ $(function () {
                 data: {'action': 'delete', 'report_name': $(this).data('report-name')},
                 dataType: 'json',
                 success: function (response) {
-                    if (response.status == 'success') {
+                    if (response.status === 'success') {
                         loadSavedReportSettings()
                     }
 
@@ -152,6 +152,18 @@ function applyValdtn(uiElement) {
     return true;
 }
 
+function escapeHtml(text) {
+    var map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+
+    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+}
+
 function runQuery(preview, record_count) {
     // when preview === false, a CSV w/ headers comes back for data download;
     // when preview === true, 200 rows without a header is returned for display inline in the datatable
@@ -170,11 +182,11 @@ function runQuery(preview, record_count) {
         showError("You must drag at least one field from the list on the left and drop it into the 'Specify Report Columns' box above. ");
         return;
     }
-    if (record_count === true) {
-        $("#count-running").show();
-    } else if (preview === true) {
+
+    $("#count-running").show();
+    if (preview === true) {
         $("#longop-running").show();
-    } else {
+    } else if (record_count === false) {
         $("#export-running").show();
     }
     $.ajax({
@@ -190,8 +202,10 @@ function runQuery(preview, record_count) {
             if (response.status === 0) {
                 showError("Error: " + response.message);
             } else {
+                var count = response.count;
+                $("#count-display").html( ' matching records: ' + count);
                 if (preview) {
-                    // console.log(response);
+                     // console.log(response);
                     t1 = response.t1;
                     // t2 = response.t2;
                     var table_data = tableize(t1.headers, t1.data);
@@ -203,11 +217,7 @@ function runQuery(preview, record_count) {
                     // $("#preview-table-div2").replaceWith(table_data2);
                     // $('#preview-table2').DataTable();
                     // $("#datatable2").show();
-                } else if (record_count) {
-                    // console.log (response);
-                    var count = response.count;
-                    $("#count-display").html( ' matching records: ' + count);
-                } else {
+                } else if (record_count === false)  {
                     var csv_data = convertToCSV(response.t1.data);
                     triggerDownload(csv_data, json.reportname + ".csv", 'text/csv;charset=utf-8;' )
                 }
@@ -276,43 +286,18 @@ function tableize(headers, rows) {
         table += '<tr>'
         isFirst = true;
         row.forEach(function(cell, index) {
+            ce = escapeHtml(cell);
             if (isFirst) {
-                table +=  '<td><a href="' + getInstrumentForField('url') + cell + '">' + cell + '</a></td>';
+                table +=  '<td><a href="' + getInstrumentForField('url') + ce + '">' + ce + '</a></td>';
                 isFirst = false;
             } else {
-                table +=  '<td>' + cell + '</td>';
+                table +=  '<td>' + ce + '</td>';
             }
         });
         table += '</tr>'
     });
     table += '</tbody></table></div>'
     return table;
-}
-
-// function tableize2(headers, rows) {
-//     // datatable.net seems to expect full on <table><tr><td></td></tr></table> markup
-//     var table = '<div id="preview-table-div2"><table id="preview-table2" class="display"><thead>';
-//     headers.forEach(function (header, index) {table +=  '<th>' + header + '</th>';});
-//     table += '</thead><tbody>'
-//     rows.forEach(function (row, index) {
-//         table += '<tr>'
-//         isFirst = true;
-//         row.forEach(function(cell, index) {
-//             if (isFirst) {
-//                 table +=  '<td><a href="' + getInstrumentForField('url') + cell + '">' + cell + '</a></td>';
-//                 isFirst = false;
-//             } else {
-//                 table +=  '<td>' + cell + '</td>';
-//             }
-//         });
-//         table += '</tr>'
-//     });
-//     table += '</tbody></table></div>'
-//     return table;
-// }
-
-function tableize_col(col, index) {
-    return '<td>' + col + '</td>';
 }
 
 function toggleIcon(id) {
@@ -340,7 +325,7 @@ function saveExportJson() {
         data: {'action': 'save', 'report_name': json.reportname, 'report_content': json},
         dataType: 'json',
         success: function (response) {
-            if (response.status == 'success') {
+            if (response.status === 'success') {
                 var $el = $("#saved-reports");
                 $el.empty(); // remove old options
                 $el.append($("<option></option>")
@@ -478,7 +463,7 @@ function getExportJson(is_preview, formdata, record_count) {
     struct.columns = columns;
     struct.filters = filters;
     struct.cardinality = Object.assign({}, cardinality);
-      console.log(struct);
+    //  console.log(struct);
     return struct;
 
 }
@@ -539,7 +524,7 @@ function loadSavedReportSettings() {
         data: {'action': 'load'},
         dataType: 'json',
         success: function (response) {
-            if (response.status == 'success') {
+            if (response.status === 'success') {
                 var $el = $("#saved-reports-tbody");
                 $el.empty(); // remove old options
                 $.each(JSON.parse(response.reports), function (key, value) {
